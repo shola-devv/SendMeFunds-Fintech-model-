@@ -1,21 +1,29 @@
 const User = require('../models/User');
 
-const register = async (res, req) =>{
 
+const User = require("../models/User");
 
+const register = async (req, res) => {
+  try {
     const user = await User.create({ ...req.body });
-  const token = user.createJWT();
-  res.status(201).json({
-    user: {
-      email: user.email,
-      lastName: user.lastName,
-      location: user.location,
-      name: user.name,
-      token,
-    },
-  });
 
-}
+    const token = user.createJWT(); // Make sure this method exists in your model
+
+    res.status(201).json({
+      user: {
+        name: user.name,
+        email: user.email,
+        phone: user.phone, // fixed typo
+        role: user.role,
+        token,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+module.exports = register;
 
 
 const login = async (req, res) =>{
