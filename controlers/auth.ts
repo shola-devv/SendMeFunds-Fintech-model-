@@ -117,12 +117,12 @@ const createSuper = async () => {
             password: hashed2,
             role: "super-admin",
           });
-          console.log("✅ Super Admin 2 created");
+          console.log(" Super Admin 2 created");
         } else {
           console.log("Super Admin 2 already exists");
         }
       } else {
-        console.log("❌ Already 2 super-admins, skipping Super Admin 2 creation");
+        console.log(" Already 2 super-admins, skipping Super Admin 2 creation");
       }
     }
   } catch (err) {
