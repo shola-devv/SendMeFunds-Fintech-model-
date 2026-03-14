@@ -1,4 +1,5 @@
  import mongoose, { Schema, Document } from "mongoose";
+ import jwt from "jsonwebtoken";
 
 export interface IUser extends Document {
   name: string
@@ -35,5 +36,15 @@ const UserSchema: Schema<IUser> = new Schema({
    enum: ["user", "admin", "super-admin"], 
    default: "user" },
 })
+
+// JWT method
+UserSchema.methods.createJWT = function() {
+  return jwt.sign(
+    { userId: this._id, role: this.role },
+    process.env.JWT_SECRET!,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "1m" }
+  );
+};
+
 
 export default mongoose.model<IUser>("User", UserSchema)
