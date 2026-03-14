@@ -1,6 +1,8 @@
 
-const notFound = (req, res) => {
-    res.status(404).send('route does not exist')
-}
+import { Request, Response } from 'express';
 
-module.exports = notFound
+const notFound = (req: Request, res: Response) => {
+    res.status(404).send('route does not exist');
+};
+
+export default notFound;
