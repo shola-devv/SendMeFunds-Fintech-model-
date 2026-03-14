@@ -1,7 +1,6 @@
-const User = require('../models/User');
-
 
 const User = require("../models/User");
+import jwt from "jsonwebtoken";
 
 const register = async (req, res) => {
   try {
@@ -23,7 +22,7 @@ const register = async (req, res) => {
   }
 };
 
-module.exports = register;
+
 
 
 const login = async (req, res) =>{
