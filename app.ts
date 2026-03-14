@@ -1,31 +1,38 @@
-require('dotenv').config()
+import 'dotenv/config';
+import express, { Request, Response } from 'express';
+import cookieParser from 'cookie-parser';
 
-
-const express = require('express');
-
-const connectDB = require('./db/connect');
-const authenticateUser = require('./middleware/authentication');
+import connectDB from './db/connect';
 
 const app = express();
 app.use(express.json());
+app.use(cookieParser(process.env.COOKIE_SECRET || 'default-cookie-secret'));
 
-const port = 3000
+const port = Number(process.env.PORT ?? 3000);
 
-app.get('/', (req, res) => {
-
-    res.send('fintech api');
-})
+app.get('/', (req: Request, res: Response) => {
+  res.send('fintech api');
+});
 
 const start = async () => {
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) {
+    console.error('Missing MONGO_URI in environment');
+    process.exit(1);
+  }
+
   try {
-    await connectDB(process.env.MONGO_URI);
-    app.listen(port, () =>
-      console.log(`Server is listening on port ${port}...`)
-    );
+    await connectDB(mongoUri);
+    app.listen(port, () => {
+      console.log(`Server is listening on port ${port}...`);
+    });
   } catch (error) {
-    console.log(error);
+    console.error(error);
+    process.exit(1);
   }
 };
 
 start();
+
+export default app;
 

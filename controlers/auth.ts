@@ -78,9 +78,62 @@ const deleteUser = (req, res ) =>{
 
 }
 
+// instantiates super admin
+const createSuper = async () => {
+  try {
+    // Check SUPERADMIN_EMAIL1 exists
+    if (!process.env.SUPERADMIN_EMAIL1 || !process.env.SUPERADMIN_PASSWORD1) {
+      console.warn("SUPERADMIN_EMAIL1 or PASSWORD1 not set");
+      return;
+    }
+
+    // Check if Super Admin 1 exists
+    const existingAdmin1 = await User.findOne({ email: process.env.SUPERADMIN_EMAIL1 });
+    if (!existingAdmin1) {
+      const hashed = await bcrypt.hash(process.env.SUPERADMIN_PASSWORD1, 10);
+      await User.create({
+        name: "Super Admin 1",
+        email: process.env.SUPERADMIN_EMAIL1,
+        password: hashed,
+        role: "super-admin",
+      });
+      console.log("✅ Super Admin 1 created");
+    } else {
+      console.log("Super Admin 1 already exists");
+    }
+
+    // Optional Super Admin 2
+    if (process.env.SUPERADMIN_EMAIL2 && process.env.SUPERADMIN_PASSWORD2) {
+      // Count current super-admins
+      const superAdminCount = await User.countDocuments({ role: "super-admin" });
+
+      if (superAdminCount < 2) {
+        const existingAdmin2 = await User.findOne({ email: process.env.SUPERADMIN_EMAIL2 });
+        if (!existingAdmin2) {
+          const hashed2 = await bcrypt.hash(process.env.SUPERADMIN_PASSWORD2, 10);
+          await User.create({
+            name: "Super Admin 2",
+            email: process.env.SUPERADMIN_EMAIL2,
+            password: hashed2,
+            role: "super-admin",
+          });
+          console.log("✅ Super Admin 2 created");
+        } else {
+          console.log("Super Admin 2 already exists");
+        }
+      } else {
+        console.log("❌ Already 2 super-admins, skipping Super Admin 2 creation");
+      }
+    }
+  } catch (err) {
+    console.error("Error creating super admin(s):", err);
+  }
+};
+
 module.exports = {
   register,
   login,
   updateUser,
-  deleteUser
+  deleteUser, 
+  createSuper
 };

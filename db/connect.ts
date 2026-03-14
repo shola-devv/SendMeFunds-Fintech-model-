@@ -1,14 +1,8 @@
+import mongoose from 'mongoose';
 
-const mongoose = require('mongoose')
+const connectDB = async (url: string) => {
+  return mongoose.connect(url);
+};
 
-const connectDB = (url) => {
-  return mongoose.connect(url, {
-    useNewUrlParser: true,
-    useCreateIndex: true,
-    useFindAndModify: false,
-    useUnifiedTopology: true,
-  })
-} 
-
-module.exports = connectDB
+export default connectDB;
  
