@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
 interface IToken extends Document {
-  user: string;
+  user: mongoose.Types.ObjectId;
   refreshToken: string;
   isValid: boolean;
   createdAt: Date;
@@ -9,7 +9,8 @@ interface IToken extends Document {
 
 const TokenSchema = new Schema<IToken>({
   user: {
-    type: String,
+    type: Schema.Types.ObjectId,
+    ref: "User",
     required: true,
   },
   refreshToken: {

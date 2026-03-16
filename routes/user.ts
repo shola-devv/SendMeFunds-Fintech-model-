@@ -1,8 +1,16 @@
+import express from 'express';
+import { register, login, logout, updateUser, deleteUser } from '../controlers/auth';
+import { authenticateUser } from '../middleware/authentication';
 
+const router = express.Router();
 
-//const express = require(express);
+// Public routes
+router.post('/register', register);
+router.post('/login', login);
+router.get('/logout', authenticateUser, logout);
 
-const router = express()
+// Protected routes
+router.patch('/updateUser', authenticateUser, updateUser);
+router.delete('/deleteUser', authenticateUser, deleteUser);
 
-router.routes.GET().
-
+export default router;

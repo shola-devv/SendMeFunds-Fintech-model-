@@ -4,7 +4,8 @@ import { isTokenValid, attachCookiesToResponse } from '../utils';
 import Token from '../models/Token';
 
 const authenticateUser = async (req: Request, res: Response, next: NextFunction) => {
-  const { refreshToken, accessToken } = req.signedCookies;
+  const accessToken = req.signedCookies?.accessToken || req.cookies?.accessToken;
+  const refreshToken = req.signedCookies?.refreshToken || req.cookies?.refreshToken;
 
   try {
     if (accessToken) {

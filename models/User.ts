@@ -6,7 +6,10 @@ export interface IUser extends Document {
   email: string
   phone: string
   createdAt: Date
+  password: string
   role: "user" | "admin" | "super-admin";
+  comparePassword(password: string): Promise<boolean>;
+  createJWT(): string;
 }
 
 const UserSchema: Schema<IUser> = new Schema({
@@ -31,6 +34,11 @@ const UserSchema: Schema<IUser> = new Schema({
     default: Date.now
   },
 
+  password: {
+    type: String,
+    required: true
+  },
+
   role: { 
    type: String, 
    enum: ["user", "admin", "super-admin"], 
@@ -44,6 +52,13 @@ UserSchema.methods.createJWT = function() {
     process.env.JWT_SECRET!,
     { expiresIn: process.env.JWT_EXPIRES_IN || "30d" }
   );
+};
+
+// Compare password method
+UserSchema.methods.comparePassword = async function(password: string): Promise<boolean> {
+  const bcrypt = require('bcryptjs');
+  const isPasswordCorrect = await bcrypt.compare(password, this.password);
+  return isPasswordCorrect;
 };
 
 

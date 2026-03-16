@@ -5,7 +5,13 @@
   "scripts": {
     "build": "tsc",
     "start": "ts-node app.ts",
-    "test": "jest"
+    "test": "NODE_ENV=test jest --runInBand"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.ts"],
+    "setupFilesAfterEnv": ["<rootDir>/tests/setup.ts"]
   },
   "keywords": [],
   "author": "",
@@ -23,11 +29,14 @@
     "@types/bcrypt": "^6.0.0",
     "@types/cookie-parser": "^1.4.3",
     "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.3",
     "@types/jsonwebtoken": "^9.0.2",
     "@types/mongoose": "^5.11.96",
     "@types/node": "^25.5.0",
     "jest": "^30.3.0",
+    "mongodb-memory-server": "^8.12.1",
     "supertest": "^7.2.2",
+    "ts-jest": "^30.0.0",
     "ts-node": "^10.9.1",
     "typescript": "^5.4.5"
   }

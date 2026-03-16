@@ -1,146 +1,227 @@
+import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import User from '../models/User';
+import Token from '../models/Token';
+import { UnauthenticatedError, UnauthorizedError, CustomError } from '../errors';
+import { attachCookiesToResponse } from '../utils';
 
-const User = require("../models/User");
-import jwt from "jsonwebtoken";
-
-const register = async (req, res) => {
+const register = async (req: Request, res: Response) => {
   try {
-    const user = await User.create({ ...req.body });
+    const { name, email, phone, password } = req.body;
 
-    const token = user.createJWT(); // Make sure this method exists in your model
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({ error: 'Please provide all required fields' });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      name,
+      email,
+      phone,
+      password: hashedPassword,
+    });
+
+    const token = user.createJWT();
 
     res.status(201).json({
       user: {
         name: user.name,
         email: user.email,
-        phone: user.phone, // fixed typo
+        phone: user.phone,
         role: user.role,
         token,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 };
 
-
-
-
-const login = async (req, res) =>{
-
+const login = async (req: Request, res: Response) => {
+  try {
     const { email, password } = req.body;
 
-  if (!email || !password) {
-    throw new BadRequestError('Please provide email and password');
-  }
-  const user = await User.findOne({ email });
-  if (!user) {
-    throw new UnauthenticatedError('Invalid Credentials');
-  }
-  const isPasswordCorrect = await user.comparePassword(password);
-  if (!isPasswordCorrect) {
-    throw new UnauthenticatedError('Invalid Credentials');
-  }
-  // compare password
-  const token = user.createJWT();
-  res.status(StatusCodes.OK).json({
-    user: {
-      email: user.email,
-      lastName: user.lastName,
-      location: user.location,
-      name: user.name,
-      token,
-    },
-  });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Please provide email and password' });
+    }
 
-}
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid Credentials' });
+    }
 
-const updateUser = async (req, res) => {
-  const { email, name, lastName, location } = req.body;
-  if (!email || !name || !lastName || !location) {
-    throw new BadRequest('Please provide all values');
+    const isPasswordCorrect = await user.comparePassword(password);
+    if (!isPasswordCorrect) {
+      return res.status(401).json({ error: 'Invalid Credentials' });
+    }
+
+    const token = user.createJWT();
+    
+    // Create/update token in database
+    await Token.findOneAndUpdate(
+      { user: user._id },
+      { user: user._id, refreshToken: token, isValid: true },
+      { upsert: true }
+    );
+
+    attachCookiesToResponse({
+      res,
+      user: { userId: user._id as string, role: user.role },
+      refreshToken: token,
+    });
+
+    res.status(200).json({
+      user: {
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        token,
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
-  const user = await User.findOne({ _id: req.user.userId });
-
-  user.email = email;
-  user.name = name;
-  user.lastName = lastName;
-  user.location = location;
-
-  await user.save();
-  const token = user.createJWT();
-  res.status(StatusCodes.OK).json({
-    user: {
-      email: user.email,
-      lastName: user.lastName,
-      location: user.location,
-      name: user.name,
-      token,
-    },
-  });
 };
 
+const logout = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+    if (!userId) {
+      return res.status(400).json({ error: 'User not authenticated' });
+    }
 
-const deleteUser = (req, res ) =>{
+    await Token.findOneAndUpdate(
+      { user: userId },
+      { isValid: false }
+    );
 
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
 
-}
+    res.status(200).json({ message: 'Logged out successfully' });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
 
-// instantiates super admin
+const updateUser = async (req: Request, res: Response) => {
+  try {
+    const { name, email, phone } = req.body;
+    const userId = (req as any).user?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    if (!name || !email || !phone) {
+      return res.status(400).json({ error: 'Please provide all values' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    user.name = name;
+    user.email = email;
+    user.phone = phone;
+
+    await user.save();
+    const token = user.createJWT();
+
+    res.status(200).json({
+      user: {
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        token,
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+const deleteUser = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const user = await User.findByIdAndDelete(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Also delete associated tokens
+    await Token.deleteMany({ user: userId });
+
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+
+    res.status(200).json({ message: 'User deleted successfully' });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// Instantiate super admin
 const createSuper = async () => {
   try {
-    // Check SUPERADMIN_EMAIL1 exists
     if (!process.env.SUPERADMIN_EMAIL1 || !process.env.SUPERADMIN_PASSWORD1) {
-      console.warn("SUPERADMIN_EMAIL1 or PASSWORD1 not set");
+      console.warn('⚠️  SUPERADMIN_EMAIL1 or PASSWORD1 not set');
       return;
     }
 
-    // Check if Super Admin 1 exists
     const existingAdmin1 = await User.findOne({ email: process.env.SUPERADMIN_EMAIL1 });
     if (!existingAdmin1) {
       const hashed = await bcrypt.hash(process.env.SUPERADMIN_PASSWORD1, 10);
       await User.create({
-        name: "Super Admin 1",
+        name: 'Super Admin 1',
         email: process.env.SUPERADMIN_EMAIL1,
+        phone: process.env.SUPERADMIN_PHONE1 || '0000000000',
         password: hashed,
-        role: "super-admin",
+        role: 'super-admin',
       });
-      console.log("✅ Super Admin 1 created");
+      console.log('✅ Super Admin 1 created');
     } else {
-      console.log("Super Admin 1 already exists");
+      console.log('ℹ️  Super Admin 1 already exists');
     }
 
-    // Optional Super Admin 2
     if (process.env.SUPERADMIN_EMAIL2 && process.env.SUPERADMIN_PASSWORD2) {
-      // Count current super-admins
-      const superAdminCount = await User.countDocuments({ role: "super-admin" });
+      const superAdminCount = await User.countDocuments({ role: 'super-admin' });
 
       if (superAdminCount < 2) {
         const existingAdmin2 = await User.findOne({ email: process.env.SUPERADMIN_EMAIL2 });
         if (!existingAdmin2) {
           const hashed2 = await bcrypt.hash(process.env.SUPERADMIN_PASSWORD2, 10);
           await User.create({
-            name: "Super Admin 2",
+            name: 'Super Admin 2',
             email: process.env.SUPERADMIN_EMAIL2,
+            phone: process.env.SUPERADMIN_PHONE2 || '0000000000',
             password: hashed2,
-            role: "super-admin",
+            role: 'super-admin',
           });
-          console.log(" Super Admin 2 created");
+          console.log('✅ Super Admin 2 created');
         } else {
-          console.log("Super Admin 2 already exists");
+          console.log('ℹ️  Super Admin 2 already exists');
         }
       } else {
-        console.log(" Already 2 super-admins, skipping Super Admin 2 creation");
+        console.log('ℹ️  Already 2 super-admins, skipping Super Admin 2 creation');
       }
     }
   } catch (err) {
-    console.error("Error creating super admin(s):", err);
+    console.error('❌ Error creating super admin(s):', err);
   }
 };
 
-module.exports = {
-  register,
-  login,
-  updateUser,
-  deleteUser, 
-  createSuper
-};
+export { register, login, logout, updateUser, deleteUser, createSuper };

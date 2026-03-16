@@ -3,6 +3,8 @@ import express, { Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 
 import connectDB from './db/connect';
+import userRoutes from './routes/user';
+import { createSuper } from './controlers/auth';
 
 const app = express();
 app.use(express.json());
@@ -14,7 +16,9 @@ app.get('/', (req: Request, res: Response) => {
   res.send('fintech api');
 });
 
-const start = async () => {
+app.use('/api/v1/users', userRoutes);
+
+export const start = async () => {
   const mongoUri = process.env.MONGO_URI;
   if (!mongoUri) {
     console.error('Missing MONGO_URI in environment');
@@ -23,6 +27,8 @@ const start = async () => {
 
   try {
     await connectDB(mongoUri);
+    await createSuper();
+
     app.listen(port, () => {
       console.log(`Server is listening on port ${port}...`);
     });
@@ -32,7 +38,10 @@ const start = async () => {
   }
 };
 
-start();
+// Only start the server when not running unit tests (allows importing app in tests)
+if (process.env.NODE_ENV !== 'test') {
+  start();
+}
 
 export default app;
 

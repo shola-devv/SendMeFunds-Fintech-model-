@@ -4,6 +4,7 @@ export interface IWallet extends Document {
   userId: mongoose.Types.ObjectId
   balance: number
   currency: string
+  pin: string | null
   createdAt: Date
 }
 
@@ -25,11 +26,20 @@ const WalletSchema: Schema<IWallet> = new Schema({
     default: "NGN"
   },
 
+  pin: {
+    type: String,
+    default: null
+  },
+
   createdAt: {
     type: Date,
     default: Date.now
   }
 
+
+
 })
+
+
 
 export default mongoose.model<IWallet>("Wallet", WalletSchema)
