@@ -27,7 +27,11 @@ const register = async (req: Request, res: Response) => {
       password: hashedPassword,
     });
 
-    const token = user.createJWT();
+    // Attach cookies with tokens
+    await attachCookiesToResponse({
+      res,
+      user: { userId: user._id.toString(), role: user.role },
+    });
 
     res.status(201).json({
       user: {
@@ -35,7 +39,6 @@ const register = async (req: Request, res: Response) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
-        token,
       },
     });
   } catch (err: any) {
@@ -61,19 +64,10 @@ const login = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid Credentials' });
     }
 
-    const token = user.createJWT();
-    
-    // Create/update token in database
-    await Token.findOneAndUpdate(
-      { user: user._id },
-      { user: user._id, refreshToken: token, isValid: true },
-      { upsert: true }
-    );
-
-    attachCookiesToResponse({
+    // Attach cookies with new tokens
+    await attachCookiesToResponse({
       res,
-      user: { userId: user._id as string, role: user.role },
-      refreshToken: token,
+     user: { userId: user._id.toString(), role: user.role },
     });
 
     res.status(200).json({
@@ -81,7 +75,6 @@ const login = async (req: Request, res: Response) => {
         email: user.email,
         name: user.name,
         role: user.role,
-        token,
       },
     });
   } catch (err: any) {
@@ -133,7 +126,12 @@ const updateUser = async (req: Request, res: Response) => {
     user.phone = phone;
 
     await user.save();
-    const token = user.createJWT();
+
+    // Refresh cookies with updated user info
+    await attachCookiesToResponse({
+      res,
+      user: { userId: user._id.toString(), role: user.role }
+    });
 
     res.status(200).json({
       user: {
@@ -141,7 +139,6 @@ const updateUser = async (req: Request, res: Response) => {
         name: user.name,
         phone: user.phone,
         role: user.role,
-        token,
       },
     });
   } catch (err: any) {

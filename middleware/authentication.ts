@@ -13,25 +13,37 @@ const authenticateUser = async (req: Request, res: Response, next: NextFunction)
       req.user = payload.user;
       return next();
     }
-    const payload = isTokenValid(refreshToken);
 
-    const existingToken = await Token.findOne({
-      user: payload.user.userId,
-      refreshToken: payload.refreshToken,
-    });
+    // If no access token, check refresh token from DB
+    if (refreshToken) {
+      const existingToken = await Token.findOne({
+        refreshToken,
+        isValid: true,
+      });
 
-    if (!existingToken || !existingToken?.isValid) {
-      throw new UnauthenticatedError('Authentication Invalid');
+      if (!existingToken) {
+        throw new UnauthenticatedError('Authentication Invalid');
+      }
+
+      // Get user details
+      const User = require('../models/User');
+      const user = await User.findById(existingToken.user);
+      if (!user) {
+        throw new UnauthenticatedError('Authentication Invalid');
+      }
+
+      // Generate new access token and refresh cookies
+      await attachCookiesToResponse({
+        res,
+        user: { userId: user._id.toString(), role: user.role },
+        refreshToken: existingToken.refreshToken,
+      });
+
+      req.user = { userId: user._id.toString(), role: user.role };
+      return next();
     }
 
-    attachCookiesToResponse({
-      res,
-      user: payload.user,
-      refreshToken: existingToken.refreshToken,
-    });
-
-    req.user = payload.user;
-    next();
+    throw new UnauthenticatedError('Authentication Invalid');
   } catch (error) {
     throw new UnauthenticatedError('Authentication Invalid');
   }

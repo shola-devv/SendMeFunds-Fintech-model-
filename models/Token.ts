@@ -15,7 +15,7 @@ const TokenSchema = new Schema<IToken>({
   },
   refreshToken: {
     type: String,
-    required: true,
+    required: true,               
   },
   isValid: {
     type: Boolean,
