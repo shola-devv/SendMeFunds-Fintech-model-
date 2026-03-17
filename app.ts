@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 
 import connectDB from './db/connect';
 import userRoutes from './routes/user';
+import walletRoutes from './routes/wallet';
 import { createSuper } from './controlers/auth';
 
 const app = express();
@@ -17,6 +18,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/wallets', walletRoutes);
 
 export const start = async () => {
   const mongoUri = process.env.MONGO_URI;

@@ -13,11 +13,11 @@ interface Payload {
 }
 
 export const isTokenValid = (token: string): Payload => {
-  return jwt.verify(token, process.env.JWT_SECRET!) as Payload;
+  return jwt.verify(token, process.env.JWT_SECRET as string) as Payload;
 };
 
 export const attachCookiesToResponse = async ({ res, user, refreshToken }: { res: Response; user: User; refreshToken?: string }) => {
-  const accessTokenJWT = jwt.sign({ user }, process.env.JWT_SECRET!, { expiresIn: '15m' });
+  const accessTokenJWT = jwt.sign({ user }, process.env.JWT_SECRET as string, { expiresIn: '15m' });
 
   let refreshTokenValue = refreshToken;
   if (!refreshTokenValue) {

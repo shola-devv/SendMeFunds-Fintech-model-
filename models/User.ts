@@ -48,9 +48,9 @@ const UserSchema: Schema<IUser> = new Schema({
 // JWT method
 UserSchema.methods.createJWT = function() {
   return jwt.sign(
-    { userId: this._id, role: this.role },
-    process.env.JWT_SECRET!,
-    { expiresIn: process.env.JWT_EXPIRES_IN || "30d" }
+    { userId: this._id.toString(), role: this.role },
+    process.env.JWT_SECRET as string,
+    { expiresIn: (process.env.JWT_EXPIRES_IN || "30d") as string }
   );
 };
 
