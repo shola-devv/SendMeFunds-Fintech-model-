@@ -609,3 +609,31 @@ src/
 If you want, I can draw the actual workflow for /transfer, /wallets/search, and /wallets/:id in a sequence diagram style showing how the request flows through idempotency, ledger, and DB locks.
 
 Do you want me to do that next?
+
+
+
+Validate input
+
+Check idempotency key (before doing anything)
+
+Start DB transaction (session)
+
+Re-check idempotency inside transaction ⚠️ (important)
+
+Fetch sender & receiver wallets
+
+Validate sender balance
+
+Verify PIN (if required)
+
+Debit sender
+
+Credit receiver
+
+Create TWO ledger entries
+
+Create audit log
+
+Save idempotency result
+
+Commit transaction

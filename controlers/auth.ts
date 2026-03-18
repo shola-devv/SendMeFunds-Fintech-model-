@@ -1,12 +1,14 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
 import User from '../models/User';
 import Token from '../models/Token';
 import { UnauthenticatedError, UnauthorizedError, CustomError } from '../errors';
 import { attachCookiesToResponse } from '../utils';
+import { AuthRequest } from '../middleware/authentication';
+ 
 
-const register = async (req: Request, res: Response) => {
+const register = async (req: AuthRequest, res: Response) => {
   try {
     const { name, email, phone, password } = req.body;
 
@@ -46,7 +48,7 @@ const register = async (req: Request, res: Response) => {
   }
 };
 
-const login = async (req: Request, res: Response) => {
+const login = async (req: AuthRequest, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -82,7 +84,7 @@ const login = async (req: Request, res: Response) => {
   }
 };
 
-const logout = async (req: Request, res: Response) => {
+const logout = async (req: AuthRequest, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
     if (!userId) {
@@ -103,10 +105,10 @@ const logout = async (req: Request, res: Response) => {
   }
 };
 
-const updateUser = async (req: Request, res: Response) => {
+const updateUser = async (req: AuthRequest, res: Response) => {
   try {
     const { name, email, phone } = req.body;
-    const userId = (req as any).user?.userId;
+     const userId = req.user?.userId;
 
     if (!userId) {
       return res.status(401).json({ error: 'Not authenticated' });
@@ -146,7 +148,7 @@ const updateUser = async (req: Request, res: Response) => {
   }
 };
 
-const deleteUser = async (req: Request, res: Response) => {
+const deleteUser = async (req: AuthRequest, res: Response) => {
   try {
     const userId = (req as any).user?.userId;
 
@@ -216,6 +218,26 @@ const createSuper = async () => {
         console.log('ℹ️  Already 2 super-admins, skipping Super Admin 2 creation');
       }
     }
+  
+  
+
+// 🧹 TEMPORARY - remove this block once tested
+    const deleteAdmin2 = async () => {
+      if (!process.env.SUPERADMIN_EMAIL2) return;
+      const admin2 = await User.findOne({ email: process.env.SUPERADMIN_EMAIL2 });
+      if (admin2) {
+        await User.findByIdAndDelete(admin2._id);
+        await Token.deleteMany({ user: admin2._id });
+        console.log('🗑️  Super Admin 2 deleted (seed cleanup)');
+      } else {
+        console.log('ℹ️  Super Admin 2 not found, nothing to delete');
+      }
+    };
+
+    // Comment out when done testing
+     //await deleteAdmin2();
+
+  
   } catch (err) {
     console.error('❌ Error creating super admin(s):', err);
   }

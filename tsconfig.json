@@ -10,8 +10,9 @@
     "moduleResolution": "node",
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "typeRoots": ["./node_modules/@types"]  // typeRoots is for folders, not individual files
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "**/*.d.ts"],  // ← make sure .d.ts files are globbed
   "exclude": ["node_modules", "dist"]
 }

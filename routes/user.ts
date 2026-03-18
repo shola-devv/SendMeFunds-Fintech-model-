@@ -7,7 +7,7 @@ const router = express.Router();
 // Public routes
 router.post('/register', register);
 router.post('/login', login);
-router.get('/logout', authenticateUser, logout);
+router.post('/logout', authenticateUser, logout);
 
 // Protected routes
 router.patch('/updateUser', authenticateUser, updateUser);
