@@ -104,18 +104,17 @@ const getWallet = async (req: AuthRequest, res: Response) => {
 
 // GET /wallets/search - Search wallet by walletId, email, phone
 const findWallet = async (req: AuthRequest, res: Response) => {
-  try {
+    try {
     const { walletId, email, phone } = req.query;
-    const requestingUserId = req.user?.userId;
 
-    if (!requestingUserId) {
+    if (!req.user?.userId) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    let query: any = {};
+    let wallet;
 
-    if (walletId) {                         // ← fixed typo: walletID → walletId
-      query._id = walletId;
+    if (walletId) {
+      wallet = await Wallet.findById(walletId).populate('userId', 'name email phone');
     } else if (email || phone) {
       const user = await User.findOne({
         ...(email && { email }),
@@ -126,18 +125,18 @@ const findWallet = async (req: AuthRequest, res: Response) => {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      query.userId = user._id;
+      wallet = await Wallet.findOne({ userId: user._id }).populate('userId', 'name email phone');
+    } else {
+      return res.status(400).json({ error: 'Provide walletId, email, or phone' });
     }
 
-    const wallet = await Wallet.findOne(query).populate('userId', 'name email phone');
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       wallet: {
         id: wallet._id,
-       
         currency: wallet.currency,
         user: wallet.userId,
       },
@@ -253,7 +252,7 @@ const fundWallet = async (req: AuthRequest, res: Response) => {
 
 // POST /wallets/transfer
 const transfer = async (req: AuthRequest, res: Response) => {
-  const session = await mongoose.startSession();   // ← mongoose now imported
+  const session = await mongoose.startSession();
 
   try {
     const { senderWalletId, receiverWalletId, amount, pin } = req.body;
@@ -272,17 +271,21 @@ const transfer = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid amount' });
     }
 
+    if (!pin) {
+      return res.status(400).json({ error: 'PIN is required' });   // ← was missing
+    }
+
     if (!idempotencyKey) {
       return res.status(400).json({ error: 'Idempotency-Key required' });
     }
 
     // Check idempotency outside transaction
-    const existing = await IdempotencyKey.findOne({ key: idempotencyKey }); // ← fixed name
+    const existing = await IdempotencyKey.findOne({ key: idempotencyKey });
     if (existing) {
       return res.status(200).json(existing.response);
     }
 
-    await session.startTransaction();
+    session.startTransaction();  // ← no await needed, startTransaction is synchronous
 
     const existingInTxn = await IdempotencyKey.findOne({ key: idempotencyKey }).session(session);
     if (existingInTxn) {
@@ -309,7 +312,12 @@ const transfer = async (req: AuthRequest, res: Response) => {
     await sender.save({ session });
     await receiver.save({ session });
 
-    const reference = `tx_${Date.now()}`;
+    const reference = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+   const debitRef  = `${reference}_debit`;   // tx_123_abc_debit
+const creditRef = `${reference}_credit`;  // tx_123_abc_credit
+
+
+
 
     await Ledger.create(
       [
@@ -319,7 +327,7 @@ const transfer = async (req: AuthRequest, res: Response) => {
           amount,
           balanceBefore: senderBefore,
           balanceAfter: sender.balance,
-          reference,
+           reference: debitRef,
           description: 'Transfer sent',
           status: 'success',
         },
@@ -329,18 +337,17 @@ const transfer = async (req: AuthRequest, res: Response) => {
           amount,
           balanceBefore: receiverBefore,
           balanceAfter: receiver.balance,
-          reference,
+           reference: creditRef,
           description: 'Transfer received',
           status: 'success',
         },
       ],
-      { session }
+      { session, ordered: true }
     );
 
-    // ← metadata removed from AuditLog
     await AuditLog.create(
-      [{ action: 'wallet_transfer', userId: authUser?.userId, amount, status: 'success', reference }],
-      { session }
+      [{ action: 'wallet_transfer', userId: authUser?.userId, walletId: sender._id, amount, status: 'success', reference }],
+      { session, ordered: true }
     );
 
     const response = {
@@ -351,17 +358,25 @@ const transfer = async (req: AuthRequest, res: Response) => {
       to: receiverWalletId,
     };
 
-    await IdempotencyKey.create([{ key: idempotencyKey, response }], { session }); // ← fixed name
+    await IdempotencyKey.create(
+      [{ key: idempotencyKey, response }],
+      { session, ordered: true }  // ← added ordered: true
+    );
 
     await session.commitTransaction();
     res.status(200).json(response);
+
   } catch (err: any) {
-    await session.abortTransaction();
+    // ← safely abort only if transaction is active
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     res.status(400).json({ error: err.message });
   } finally {
     session.endSession();
   }
 };
+
 
 // GET /wallets/ledger/:walletId
 const viewLedger = async (req: AuthRequest, res: Response) => {
