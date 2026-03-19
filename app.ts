@@ -21,6 +21,7 @@ app.get('/', (req: Request, res: Response) => {
 
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/wallets', walletRoutes);
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
 export const start = async () => {
   const mongoUri = process.env.MONGO_URI;

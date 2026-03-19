@@ -10,7 +10,7 @@ import { QueryTypes }        from 'sequelize';
 import * as bcrypt           from 'bcryptjs';
 import * as crypto           from 'crypto';
 import { sequelize }         from '../config/postgres';
-import { AuthRequest }       from '../middleware/authentication';
+
 
 
 
