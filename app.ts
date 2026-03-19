@@ -6,6 +6,8 @@ import connectDB from './db/connect';
 import userRoutes from './routes/user';
 import walletRoutes from './routes/wallet';
 import { createSuper } from './controlers/auth';
+import { connectPostgres } from './config/postgres';
+
 
 const app = express();
 app.use(express.json());
@@ -29,6 +31,11 @@ export const start = async () => {
 
   try {
     await connectDB(mongoUri);
+    
+
+    // new PostgreSQL
+  await connectPostgres();
+    
     await createSuper();
 
     app.listen(port, () => {

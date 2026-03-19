@@ -6,6 +6,43 @@ import AuditLog from '../models/auditLog';
 import Ledger from '../models/ledger';
 import IdempotencyKey from '../models/idempotencyKey';
 import { AuthRequest } from '../middleware/authentication';
+import { QueryTypes }        from 'sequelize';
+import * as bcrypt           from 'bcryptjs';
+import * as crypto           from 'crypto';
+import { sequelize }         from '../config/postgres';
+import { AuthRequest }       from '../middleware/authentication';
+
+
+
+interface WalletRow {
+  id:        number;
+  mongo_id:  string;
+  user_id:   string;
+  balance:   string;    // Sequelize returns DECIMAL as string — parse with parseFloat
+  pin_hash:  string | null;
+  is_active: boolean;
+}
+ 
+interface IdempotencyRow {
+  id:       number;
+  key:      string;
+  user_id:  string;
+  response: object;   // JSONB already parsed by pg driver
+}
+
+
+//helper functions 
+function generateReference(): string {
+  return `tx_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+}
+ 
+function hashRequestBody(body: object): string {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify(body))
+    .digest('hex');
+}
+
 
 // POST /wallets - Create wallet with initial 1000 NGN credit
 const createWallet = async (req: AuthRequest, res: Response) => {
@@ -251,131 +288,361 @@ const fundWallet = async (req: AuthRequest, res: Response) => {
 };
 
 // POST /wallets/transfer
-const transfer = async (req: AuthRequest, res: Response) => {
-  const session = await mongoose.startSession();
-
+const transfer   = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<Response> => {
+  const { senderWalletId, receiverWalletId, amount, pin } = req.body as {
+    senderWalletId:   string;
+    receiverWalletId: string;
+    amount:           number;
+    pin:              string;
+  };
+ 
+  const idempotencyKey = req.headers['idempotency-key'] as string | undefined;
+  const userId         = req.user?.userId;
+ 
+  // ── 1. Basic input validation ─────────────────────────────────────────────
+ 
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Unauthorised' });
+  }
+ 
+  if (!senderWalletId || !receiverWalletId || !amount || !pin) {
+    return res.status(400).json({
+      success: false,
+      message: 'senderWalletId, receiverWalletId, amount, and pin are required',
+    });
+  }
+ 
+  if (typeof amount !== 'number' || amount <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'amount must be a positive number',
+    });
+  }
+ 
+  if (senderWalletId === receiverWalletId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Sender and receiver wallets must be different',
+    });
+  }
+ 
+  if (!idempotencyKey) {
+    return res.status(400).json({
+      success: false,
+      message: 'Idempotency-Key header is required',
+    });
+  }
+ 
+  // ── 2. Idempotency check (outside transaction — read-only) ────────────────
+  //    If this exact key was used before, replay the stored response.
+ 
+  const existingKeys = await sequelize.query<IdempotencyRow>(
+    `SELECT id, key, user_id, response
+       FROM idempotency_keys
+      WHERE key      = :idempotencyKey
+        AND user_id  = :userId
+        AND expires_at > NOW()
+      LIMIT 1`,
+    {
+      replacements: { idempotencyKey, userId },
+      type:         QueryTypes.SELECT,
+    },
+  );
+ 
+  if (existingKeys.length > 0) {
+    return res.status(200).json({
+      success:     true,
+      message:     'Duplicate request — returning cached response',
+      idempotent:  true,
+      data:        existingKeys[0].response,
+    });
+  }
+ 
+  // ── 3. Open a raw transaction ─────────────────────────────────────────────
+ 
+  const t = await sequelize.transaction();
+ 
   try {
-    const { senderWalletId, receiverWalletId, amount, pin } = req.body;
-    const idempotencyKey = req.headers['idempotency-key'] as string;
-    const authUser = req.user;
-
-    if (!senderWalletId || !receiverWalletId || !amount) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    if (senderWalletId === receiverWalletId) {
-      return res.status(400).json({ error: 'Cannot transfer to same wallet' });
-    }
-
-    if (amount <= 0) {
-      return res.status(400).json({ error: 'Invalid amount' });
-    }
-
-    if (!pin) {
-      return res.status(400).json({ error: 'PIN is required' });   // ← was missing
-    }
-
-    if (!idempotencyKey) {
-      return res.status(400).json({ error: 'Idempotency-Key required' });
-    }
-
-    // Check idempotency outside transaction
-    const existing = await IdempotencyKey.findOne({ key: idempotencyKey });
-    if (existing) {
-      return res.status(200).json(existing.response);
-    }
-
-    session.startTransaction();  // ← no await needed, startTransaction is synchronous
-
-    const existingInTxn = await IdempotencyKey.findOne({ key: idempotencyKey }).session(session);
-    if (existingInTxn) {
-      await session.abortTransaction();
-      return res.status(200).json(existingInTxn.response);
-    }
-
-    const sender = await Wallet.findById(senderWalletId).session(session);
-    const receiver = await Wallet.findById(receiverWalletId).session(session);
-
-    if (!sender || !receiver) throw new Error('Wallet not found');
-
-    const isPinCorrect = await sender.comparePin(pin);
-    if (!isPinCorrect) throw new Error('Invalid PIN');
-
-    if (sender.balance < amount) throw new Error('Insufficient funds');
-
-    const senderBefore = sender.balance;
-    const receiverBefore = receiver.balance;
-
-    sender.balance -= amount;
-    receiver.balance += amount;
-
-    await sender.save({ session });
-    await receiver.save({ session });
-
-    const reference = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-   const debitRef  = `${reference}_debit`;   // tx_123_abc_debit
-const creditRef = `${reference}_credit`;  // tx_123_abc_credit
-
-
-
-
-    await Ledger.create(
-      [
-        {
-          walletId: sender._id,
-          type: 'debit',
-          amount,
-          balanceBefore: senderBefore,
-          balanceAfter: sender.balance,
-           reference: debitRef,
-          description: 'Transfer sent',
-          status: 'success',
-        },
-        {
-          walletId: receiver._id,
-          type: 'credit',
-          amount,
-          balanceBefore: receiverBefore,
-          balanceAfter: receiver.balance,
-           reference: creditRef,
-          description: 'Transfer received',
-          status: 'success',
-        },
-      ],
-      { session, ordered: true }
+    // ── 4. Lock both wallet rows with FOR UPDATE ──────────────────────────
+    //    Always lock lower mongo_id first to prevent deadlocks when two
+    //    concurrent transfers involve the same pair of wallets in reverse.
+ 
+    const [firstId, secondId] =
+      senderWalletId < receiverWalletId
+        ? [senderWalletId, receiverWalletId]
+        : [receiverWalletId, senderWalletId];
+ 
+    // Lock in deterministic order
+    await sequelize.query(
+      `SELECT id FROM wallets
+        WHERE mongo_id IN (:firstId, :secondId)
+        ORDER BY mongo_id
+        FOR UPDATE`,
+      {
+        replacements: { firstId, secondId },
+        type:         QueryTypes.SELECT,
+        transaction:  t,
+      },
     );
-
-    await AuditLog.create(
-      [{ action: 'wallet_transfer', userId: authUser?.userId, walletId: sender._id, amount, status: 'success', reference }],
-      { session, ordered: true }
+ 
+    // ── 5. Read current sender wallet state ───────────────────────────────
+ 
+    const senderRows = await sequelize.query<WalletRow>(
+      `SELECT id, mongo_id, user_id, balance, pin_hash, is_active
+         FROM wallets
+        WHERE mongo_id = :senderWalletId
+        LIMIT 1`,
+      {
+        replacements: { senderWalletId },
+        type:         QueryTypes.SELECT,
+        transaction:  t,
+      },
     );
-
-    const response = {
-      message: 'Transfer successful',
+ 
+    if (senderRows.length === 0) {
+      await t.rollback();
+      return res.status(404).json({ success: false, message: 'Sender wallet not found' });
+    }
+ 
+    const sender = senderRows[0];
+ 
+    if (!sender.is_active) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: 'Sender wallet is inactive' });
+    }
+ 
+    // ── 6. Verify PIN ─────────────────────────────────────────────────────
+ 
+    if (!sender.pin_hash) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: 'Transaction PIN not set' });
+    }
+ 
+    const pinValid = await bcrypt.compare(pin, sender.pin_hash);
+    if (!pinValid) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: 'Invalid PIN' });
+    }
+ 
+    // ── 7. Check sufficient balance ───────────────────────────────────────
+    //    Parse DECIMAL string → number for arithmetic
+ 
+    const senderBalance = parseFloat(sender.balance);
+    if (senderBalance < amount) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient balance. Available: ${senderBalance.toFixed(2)}`,
+      });
+    }
+ 
+    // ── 8. Read receiver wallet ───────────────────────────────────────────
+ 
+    const receiverRows = await sequelize.query<WalletRow>(
+      `SELECT id, mongo_id, user_id, balance, is_active
+         FROM wallets
+        WHERE mongo_id = :receiverWalletId
+        LIMIT 1`,
+      {
+        replacements: { receiverWalletId },
+        type:         QueryTypes.SELECT,
+        transaction:  t,
+      },
+    );
+ 
+    if (receiverRows.length === 0) {
+      await t.rollback();
+      return res.status(404).json({ success: false, message: 'Receiver wallet not found' });
+    }
+ 
+    const receiver = receiverRows[0];
+ 
+    if (!receiver.is_active) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: 'Receiver wallet is inactive' });
+    }
+ 
+    const receiverBalance = parseFloat(receiver.balance);
+ 
+    // ── 9. Compute new balances ───────────────────────────────────────────
+    //    Use toFixed(2) so we always write valid DECIMAL(15,2) strings
+ 
+    const newSenderBalance   = (senderBalance   - amount).toFixed(2);
+    const newReceiverBalance = (receiverBalance + amount).toFixed(2);
+    const reference          = generateReference();
+    const debitRef           = `${reference}_debit`;
+    const creditRef          = `${reference}_credit`;
+    const now                = new Date().toISOString();
+ 
+    // ── 10. Deduct from sender ────────────────────────────────────────────
+ 
+    await sequelize.query(
+      `UPDATE wallets
+          SET balance    = :newSenderBalance,
+              updated_at = NOW()
+        WHERE mongo_id   = :senderWalletId`,
+      {
+        replacements: { newSenderBalance, senderWalletId },
+        type:         QueryTypes.UPDATE,
+        transaction:  t,
+      },
+    );
+ 
+    // ── 11. Credit receiver ───────────────────────────────────────────────
+ 
+    await sequelize.query(
+      `UPDATE wallets
+          SET balance    = :newReceiverBalance,
+              updated_at = NOW()
+        WHERE mongo_id   = :receiverWalletId`,
+      {
+        replacements: { newReceiverBalance, receiverWalletId },
+        type:         QueryTypes.UPDATE,
+        transaction:  t,
+      },
+    );
+ 
+    // ── 12. Double-entry ledger ───────────────────────────────────────────
+    //    DEBIT row for sender
+ 
+    await sequelize.query(
+      `INSERT INTO ledgers
+         (wallet_id, type, amount, balance_after, reference, description, created_at)
+       VALUES
+         (:walletId, 'debit', :amount, :balanceAfter, :reference, :description, NOW())`,
+      {
+        replacements: {
+          walletId:     senderWalletId,
+          amount:       amount.toFixed(2),
+          balanceAfter: newSenderBalance,
+          reference:    debitRef,
+          description:  `Transfer to ${receiverWalletId} | ref: ${reference}`,
+        },
+        type:        QueryTypes.INSERT,
+        transaction: t,
+      },
+    );
+ 
+    //    CREDIT row for receiver
+ 
+    await sequelize.query(
+      `INSERT INTO ledgers
+         (wallet_id, type, amount, balance_after, reference, description, created_at)
+       VALUES
+         (:walletId, 'credit', :amount, :balanceAfter, :reference, :description, NOW())`,
+      {
+        replacements: {
+          walletId:     receiverWalletId,
+          amount:       amount.toFixed(2),
+          balanceAfter: newReceiverBalance,
+          reference:    creditRef,
+          description:  `Transfer from ${senderWalletId} | ref: ${reference}`,
+        },
+        type:        QueryTypes.INSERT,
+        transaction: t,
+      },
+    );
+ 
+    // ── 13. Audit log ─────────────────────────────────────────────────────
+ 
+    const auditMetadata = JSON.stringify({
       reference,
       amount,
-      from: senderWalletId,
-      to: receiverWalletId,
-    };
-
-    await IdempotencyKey.create(
-      [{ key: idempotencyKey, response }],
-      { session, ordered: true }  // ← added ordered: true
+      senderWalletId,
+      receiverWalletId,
+      senderBalanceBefore:   senderBalance.toFixed(2),
+      senderBalanceAfter:    newSenderBalance,
+      receiverBalanceBefore: receiverBalance.toFixed(2),
+      receiverBalanceAfter:  newReceiverBalance,
+    });
+ 
+    await sequelize.query(
+      `INSERT INTO audit_logs
+         (user_id, action, entity, entity_id, metadata, created_at)
+       VALUES
+         (:userId, 'TRANSFER', 'wallet', :entityId, :metadata::jsonb, NOW())`,
+      {
+        replacements: {
+          userId,
+          entityId: senderWalletId,
+          metadata: auditMetadata,
+        },
+        type:        QueryTypes.INSERT,
+        transaction: t,
+      },
     );
-
-    await session.commitTransaction();
-    res.status(200).json(response);
-
-  } catch (err: any) {
-    // ← safely abort only if transaction is active
-    if (session.inTransaction()) {
-      await session.abortTransaction();
+ 
+    // ── 14. Build response payload (stored verbatim for idempotency) ──────
+ 
+    const responsePayload = {
+      reference,
+      amount,
+      senderWalletId,
+      receiverWalletId,
+      senderNewBalance:   parseFloat(newSenderBalance),
+      receiverNewBalance: parseFloat(newReceiverBalance),
+      timestamp:          now,
+      ledger: {
+        debit:  debitRef,
+        credit: creditRef,
+      },
+    };
+ 
+    // ── 15. Store idempotency key with JSONB response ─────────────────────
+ 
+    await sequelize.query(
+      `INSERT INTO idempotency_keys
+         (key, user_id, request_hash, response, created_at, expires_at)
+       VALUES
+         (:idempotencyKey, :userId, :requestHash, :response::jsonb, NOW(), NOW() + INTERVAL '24 hours')`,
+      {
+        replacements: {
+          idempotencyKey,
+          userId,
+          requestHash: hashRequestBody({ senderWalletId, receiverWalletId, amount }),
+          response:    JSON.stringify(responsePayload),
+        },
+        type:        QueryTypes.INSERT,
+        transaction: t,
+      },
+    );
+ 
+    // ── 16. Commit ────────────────────────────────────────────────────────
+ 
+    await t.commit();
+ 
+    return res.status(200).json({
+      success: true,
+      message: 'Transfer successful',
+      data:    responsePayload,
+    });
+ 
+  } catch (error: unknown) {
+    // ── Rollback on any error ─────────────────────────────────────────────
+    await t.rollback();
+ 
+    console.error('[transferFunds] Error:', error);
+ 
+    // Surface unique-constraint violation (duplicate reference / idempotency key)
+    if (
+      error instanceof Error &&
+      error.message.includes('unique constraint')
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: 'Duplicate transaction detected',
+      });
     }
-    res.status(400).json({ error: err.message });
-  } finally {
-    session.endSession();
+ 
+    return res.status(500).json({
+      success: false,
+      message: 'Transfer failed due to an internal error',
+    });
   }
-};
+}
 
 
 // GET /wallets/ledger/:walletId
